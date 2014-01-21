@@ -1,0 +1,59 @@
+#!/usr/bin/env python
+import sys
+import threading
+from subprocess import PIPE, Popen
+from Queue import Queue
+
+running = True
+
+def start_handing_over(queue, proc):
+    def hand_over_func(queue, proc):
+        global running
+        while running or not queue.empty():
+            line = queue.get()
+            proc.stdin.write(line)
+            proc.stdin.flush()
+            print('[Sent       ]: ' + line.rstrip())
+    t = threading.Thread(target=hand_over_func, args=(queue, proc))
+    t.daemon = True
+    t.start()
+    return t
+
+def monitor_downstream_output(proc):
+    def get_output(proc):
+        global running
+        line = True
+        while running and line:
+            line = proc.stdout.readline()
+            print('[Downstream ]: ' + line.rstrip())
+    t = threading.Thread(target=get_output, args=(proc, ))
+    t.daemon = True
+    t.start()
+    return t
+
+def listen_to_upstream(queue):
+    for line in sys.stdin:
+        print('[Received   ]: ' + line.rstrip())
+        if not queue.full():
+            queue.put(line)
+
+def main():
+    command = sys.argv[1:]
+    if not command:
+        print('usage: progame_a | non_blocking_pipe program_b arg1 arg2 ...')
+        sys.exit(1)
+    else:
+        queue = Queue(1000)
+        print('[Handover to]: ' + str(command))
+        proc = Popen(command, shell=False, stdin=PIPE, stdout=PIPE, bufsize=0)
+        t1 = monitor_downstream_output(proc)
+        t2 = start_handing_over(queue, proc)
+        listen_to_upstream(queue)
+        global running
+        running = False
+        t2.join()
+        t1.join()
+        proc.terminate()
+
+if __name__ == '__main__':
+    main()
